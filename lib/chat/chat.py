@@ -7,6 +7,7 @@ from botocore.exceptions import ClientError
 # Tablas de DynamoDB
 QUOTA_TABLE_NAME = 'BedrockChatbotQuota'
 PROGRESS_TABLE_NAME = 'BedrockChatProgress'
+APTITUDES_TABLE_NAME = 'AptitudesTable'
 
 # Límites
 USER_REQUEST_LIMIT = 25
@@ -77,6 +78,129 @@ Empieza AHORA con el mensaje de inicio y la primera pregunta.
 
 # --- FUNCIONES DE AYUDA ---
 
+def get_aptitudes_from_table():
+    """
+    Lee todas las aptitudes activas de la tabla AptitudesTable
+    """
+    try:
+        aptitudes_table = dynamodb.Table(APTITUDES_TABLE_NAME)
+        response = aptitudes_table.scan(
+            FilterExpression='activa = :activa',
+            ExpressionAttributeValues={':activa': True}
+        )
+        
+        aptitudes = [item['aptitud'] for item in response['Items']]
+        return aptitudes
+    except Exception as e:
+        print(f"Error al leer aptitudes: {e}")
+        # Retornar aptitudes por defecto si hay error
+        return [
+            "Razonamiento Lógico / Analítico",
+            "Creatividad / Artístico-Espacial", 
+            "Habilidad Numérica / Organizativa",
+            "Comunicación / Persuasión (Verbal y Social)",
+            "Destreza Práctica / Tecnológica"
+        ]
+
+def extract_final_scores_from_response(chatbot_response):
+    """
+    Extrae el objeto JSON final_scores de la respuesta del chatbot
+    """
+    import re
+    
+    # Buscar el patrón final_scores: {...}
+    pattern = r'final_scores:\s*\{([^}]+)\}'
+    match = re.search(pattern, chatbot_response)
+    
+    if match:
+        try:
+            # Extraer el contenido del JSON
+            json_content = match.group(1)
+            # Limpiar y parsear el JSON
+            json_content = json_content.strip()
+            # Convertir a formato JSON válido
+            json_str = "{" + json_content + "}"
+            # Parsear el JSON
+            final_scores = json.loads(json_str)
+            return final_scores
+        except (json.JSONDecodeError, ValueError) as e:
+            print(f"Error al parsear final_scores: {e}")
+            return None
+    return None
+
+def clean_chatbot_response(chatbot_response):
+    """
+    Remueve el objeto JSON final_scores de la respuesta del chatbot
+    """
+    import re
+    
+    # Remover el patrón final_scores: {...}
+    pattern = r'final_scores:\s*\{[^}]+\}'
+    cleaned_response = re.sub(pattern, '', chatbot_response).strip()
+    
+    return cleaned_response
+
+def build_dynamic_master_prompt(aptitudes):
+    """
+    Construye el master prompt dinámicamente usando las aptitudes de la tabla
+    """
+    # Crear la tabla de cuestionario dinámicamente
+    tabla_cuestionario = ""
+    for i, aptitud in enumerate(aptitudes[:5], 1):  # Máximo 5 aptitudes
+        tabla_cuestionario += f"|| {i} | **{aptitud}** |\n"
+    
+    master_prompt = f"""
+**ROL (ÚNICO E INNEGOCIABLE):** Eres un Motor de Interfaz de Cuestionario Vocacional. Tu única función es gestionar el flujo de {len(aptitudes[:5])} preguntas, registrar las respuestas y generar el análisis final. NO ERES UN CHATBOT CONVERSACIONAL.
+
+**INSTRUCCIÓN DE COMPORTAMIENTO ABSOLUTO (PRIORIDAD MÁXIMA):**
+Tu única salida permitida es:
+1. El mensaje de inicio (solo una vez).
+2. La siguiente pregunta del cuestionario (solo una vez por turno).
+3. El mensaje de error fijo (guardrail).
+4. El análisis final (solo una vez).
+
+CUALQUIER OTRA FORMA DE INTERACCIÓN, conversación, narrativa, explicación de tu rol, o respuesta a preguntas ajenas al cuestionario (ej. "¿qué más puedes hacer?", "cuéntame un cuento", "salúdame"), está **TERMINANTEMENTE PROHIBIDA**.
+
+**DIRECTIVA DE INTERACCIÓN CRÍTICA (Flujo Estricto Pregunta/Respuesta):**
+1. DEBES generar **UNA SOLA pregunta** por mensaje.
+2. Después de cada pregunta, DEBES esperar la respuesta del usuario.
+3. NO incluyas ninguna instrucción de escala de puntuación o de espera.
+
+**REGLAS DE DESVÍO Y RESTRICCIÓN (Guardrails):**
+Si la entrada del usuario no es una respuesta directa y relevante a la última pregunta:
+* **IGNORA** completamente el contenido de la entrada.
+* **DEBES RESPONDER EXCLUSIVAMENTE** con el siguiente mensaje fijo y nada más:
+    "**No estoy entrenado para responder eso. Por favor, concéntrate en responder la última pregunta con tu nivel de aptitud.**"
+
+**ESCALA DE RESPUESTA E INTERPRETACIÓN (Lenguaje Natural):**
+El usuario responderá con palabras o frases que debes interpretar en una escala interna de 1 a 4.
+
+| Puntuación Interna | Palabras Clave de Interpretación (Ejemplos) |
+| :---: | :--- |
+| **1** | Nada apto, muy poco, nunca, incompetente |
+| **2** | Medianamente, a veces, regular, más o menos |
+| **3** | Bastante, sí, a menudo, competente |
+| **4** | Muy apto, excelente, totalmente, mucho |
+
+**TABLA DE CUESTIONARIO ({len(aptitudes[:5])} Preguntas / {len(aptitudes[:5])} Áreas Representativas):**
+
+| P# | Aptitud a Medir (Área de Foco) |
+| :---: | :--- |
+{tabla_cuestionario}
+
+**ANÁLISIS FINAL (FORMATO ESTRICTO):**
+Una vez finalizada la pregunta {len(aptitudes[:5])} y recibida su respuesta, DEBES:
+1. Interpretar y registrar la puntuación (entre 0 y 1)para cada respuesta.
+2. Presentar los {len(aptitudes[:5])} resultados en una lista numerada, ordenados **de mayor a menor puntuación**.
+3. Identificar y nombrar el **ÁREA DOMINANTE** (la de mayor puntuación).
+4. Ofrecer una **CONCLUSIÓN VOCACIONAL** de un párrafo (máximo 40 palabras) que sugiera brevemente 2-3 Áreas Ocupacionales compatibles con el Área Dominante.
+5. SALIDA JSON REQUERIDA (ÚLTIMA LÍNEA): Después de la Conclusión Vocacional, en una nueva línea, DEBES generar un objeto JSON sin formato (sin markdown blocks o formato de código) llamado "final_scores" que contenga las aptitudes y sus respectivas puntuaciones normalizadas (0.0 a 1.0) calculadas en el paso 2. El objeto debe seguir estrictamente este formato: final_scores: {{aptitud_1: puntuación_normalizada,aptitud_2:puntuación_normalizada}}
+
+**INICIO DE LA INTERACCIÓN:**
+Empieza AHORA con el mensaje de inicio y la primera pregunta.
+"""
+    return master_prompt
+
 def handle_quota_check(quota_table, user_id, today_date, limit, is_global):
     """
     Verifica y actualiza de forma atómica el contador en DynamoDB.
@@ -113,7 +237,7 @@ def handler(event, context):
         prompt = body.get('prompt')
         chat_id = body.get('ChatID')
 
-        if not all([user_id, prompt, chat_id]):
+        if not all([user_id, chat_id]):
             return {
                 'statusCode': 400,
                 'body': json.dumps({'error': 'Faltan parámetros: UserID, prompt y ChatID son obligatorios.'})
@@ -150,8 +274,10 @@ def handler(event, context):
     
         # 3a. Inicializar o cargar el estado
         if 'Item' not in progress_response:
-            # Nuevo chat
-            history = []
+            # Nuevo chat - construir master prompt dinámicamente con aptitudes
+            aptitudes = get_aptitudes_from_table()
+            dynamic_master_prompt = build_dynamic_master_prompt(aptitudes)
+            history = [f"System: {dynamic_master_prompt}"]
             next_question = 1
         else:
             # Chat existente
@@ -177,7 +303,7 @@ def handler(event, context):
                         'chatbot_response': "Test finalizado. Aquí está el historial completo.",
                         'chat_id': chat_id,
                         'status': 'FINISHED',
-                        'full_history': history 
+                        'full_history': history
                     })
                 }
             # ---------------------------------------
@@ -192,37 +318,25 @@ def handler(event, context):
         
         messages_list = []
         
-        # 1. Lógica para la primera interacción (next_question == 1)
-        if next_question == 1:
-            # Inyectamos el MASTER_PROMPT como el único mensaje 'user'.
-            messages_list.append({
-                "role": "user",
-                "content": [{"text": MASTER_PROMPT}]
-            })
-            
-        # 2. Lógica para interacciones continuas (next_question > 1)
-        else:
-            # a. Inyectar el MASTER_PROMPT como el primer mensaje 'user' (System Prompt Trick)
-            messages_list.append({
-                "role": "user",
-                "content": [{"text": MASTER_PROMPT}]
-            })
-            
-            # b. Reconstruir la lista de mensajes de conversación a partir del historial
-            for line in history:
-                if line.startswith("Usuario:"):
-                    role = "user"
-                    text_content = line[9:].strip() 
-                elif line.startswith("Asistente:"):
-                    role = "assistant"
-                    text_content = line[11:].strip() 
-                else:
-                    continue 
+        # Reconstruir la lista de mensajes de conversación a partir del historial
+        for line in history:
+            if line.startswith("System:"):
+                # El master prompt guardado se envía como mensaje de usuario (System Prompt Trick)
+                role = "user"
+                text_content = line[7:].strip()  # Remover "System: " del inicio
+            elif line.startswith("Usuario:"):
+                role = "user"
+                text_content = line[9:].strip() 
+            elif line.startswith("Asistente:"):
+                role = "assistant"
+                text_content = line[11:].strip() 
+            else:
+                continue 
 
-                messages_list.append({
-                    "role": role,
-                    "content": [{"text": text_content}]
-                })
+            messages_list.append({
+                "role": role,
+                "content": [{"text": text_content}]
+            })
         
         # 3. Definir el payload con la lista de mensajes
         payload_bedrock = {
@@ -255,8 +369,17 @@ def handler(event, context):
             raise Exception("Respuesta de Bedrock mal formada o vacía.")
 
         
-        # 5a. Agregar la respuesta del bot al historial
-        history.append(f"Asistente: {chatbot_response}")
+        # 5a. Procesar la respuesta del chatbot
+        final_scores = None
+        cleaned_response = chatbot_response
+        
+        # Si es el análisis final, extraer el JSON y limpiar la respuesta
+        if "ANÁLISIS FINAL" in chatbot_response.upper() or next_question >= 6:
+            final_scores = extract_final_scores_from_response(chatbot_response)
+            cleaned_response = clean_chatbot_response(chatbot_response)
+        
+        # Agregar la respuesta limpia al historial
+        history.append(f"Asistente: {cleaned_response}")
 
         # 5b. Determinar el siguiente paso
         
@@ -272,7 +395,6 @@ def handler(event, context):
                 }
             )
             status_message = 'FINISHED'
-            full_history_output = history 
 
         else:
             # Chat continúa: Guardar nuevo estado con status IN_PROGRESS
@@ -287,18 +409,24 @@ def handler(event, context):
                 }
             )
             status_message = f'Waiting for Q{new_question_number}'
-            full_history_output = None
 
-        # 6. Retornar la respuesta del chatbot
+        # 6. Construir la respuesta
+        response_data = {
+            'chatbot_response': cleaned_response,
+            'chat_id': chat_id,
+            'status': status_message,
+            'full_history': history
+        }
+        
+        # Agregar final_scores si existe
+        if final_scores is not None:
+            response_data['final_scores'] = final_scores
+        
+        # Retornar la respuesta del chatbot
         return {
             'statusCode': 200,
             'headers': { "Content-Type": "application/json" },
-            'body': json.dumps({
-                'chatbot_response': chatbot_response,
-                'chat_id': chat_id,
-                'status': status_message,
-                'full_history': full_history_output
-            })
+            'body': json.dumps(response_data)
         }
 
 
