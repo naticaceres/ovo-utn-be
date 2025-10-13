@@ -1,29 +1,22 @@
 from aws_cdk import (
     Stack,
     aws_apigateway as apigw,
-    aws_lambda as _lambda,
-    aws_dynamodb as dynamodb,
-    aws_iam as iam,
-    Duration
+    aws_dynamodb as dynamodb
 )
 from constructs import Construct
 
+# Importar stacks modulares
+from .stacks.hello_stack import HelloStack
+from .stacks.chat_stack import ChatStack
+from .stacks.aptitudes_stack import AptitudesStack
+
 class OvoUtnBeStack(Stack):
+    """Stack principal que orquesta todos los módulos"""
 
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
         
-        # Lambda para endpoint /hello
-        hello_function = _lambda.Function(
-            self,
-            "HelloFunction",
-            runtime=_lambda.Runtime.PYTHON_3_12,
-            handler="hello.handler",
-            code=_lambda.Code.from_asset("lib/hello"),
-            description="Lambda function for hello endpoint"
-        )
-        
-        # Crear tablas DynamoDB
+        # Crear tablas DynamoDB centrales
         quota_table = dynamodb.Table(
             self,
             "BedrockChatbotQuota",
@@ -50,65 +43,23 @@ class OvoUtnBeStack(Stack):
             billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST
         )
         
-        # Lambda para endpoint /chat (Bedrock Chatbot)
-        chat_function = _lambda.Function(
-            self,
-            "ChatFunction",
-            runtime=_lambda.Runtime.PYTHON_3_12,
-            handler="chat.handler",
-            code=_lambda.Code.from_asset("lib/chat"),
-            timeout=Duration.minutes(5),
-            description="Lambda function for chat endpoint with Bedrock integration",
-            environment={
-                "QUOTA_TABLE_NAME": quota_table.table_name,
-                "PROGRESS_TABLE_NAME": progress_table.table_name
-            }
-        )
-        
-        # Agregar permisos DynamoDB a la Lambda
-        quota_table.grant_read_write_data(chat_function)
-        progress_table.grant_read_write_data(chat_function)
-        
-        # Agregar permisos Bedrock a la Lambda
-        chat_function.add_to_role_policy(
-            iam.PolicyStatement(
-                effect=iam.Effect.ALLOW,
-                actions=[
-                    "bedrock:InvokeModel"
-                ],
-                resources=["*"]
-            )
-        )
-        
-        # Crear UNA SOLA API Gateway
+        # Crear API Gateway central
         api = apigw.RestApi(
             self,
-            "MyApi",
+            "OvoApi",
             rest_api_name="OvoUtnApi",
-            description="API with hello and chat endpoints"
+            description="API para OVO"
         )
         
-        # Agregar ruta /hello
-        hello_resource = api.root.add_resource("hello")
-        hello_resource.add_method("ANY", apigw.LambdaIntegration(hello_function))
+        # Inicializar stacks modulares
+        hello_stack = HelloStack(self, "HelloStack")
+        chat_stack = ChatStack(self, "ChatStack", quota_table, progress_table)
+        aptitudes_stack = AptitudesStack(self, "AptitudesStack")
         
-        # Agregar ruta /chat
-        chat_resource = api.root.add_resource("chat")
-        chat_resource.add_method("ANY", apigw.LambdaIntegration(chat_function))
-        
-        # Crear deployment y stage
-        # deployment = apigw.Deployment(
-        #     self,
-        #     "Deployment",
-        #     api=api
-        # )
-        
-        # stage = apigw.Stage(
-        #     self,
-        #     "ProdStage",
-        #     deployment=deployment,
-        #     stage_name="prod"
-        # )
+        # Agregar rutas al API Gateway
+        hello_stack.add_to_api(api)
+        chat_stack.add_to_api(api)
+        aptitudes_stack.add_to_api(api)
         
         # Outputs
         from aws_cdk import CfnOutput
@@ -132,4 +83,11 @@ class OvoUtnBeStack(Stack):
             "ChatEndpoint",
             value=f"{api.url}chat",
             description="Chat endpoint URL"
+        )
+        
+        CfnOutput(
+            self,
+            "AptitudesEndpoints",
+            value=f"{api.url}aptitudes/",
+            description="Aptitudes endpoints: agregar, editar, eliminar, listar"
         )
