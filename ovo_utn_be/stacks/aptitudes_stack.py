@@ -8,20 +8,11 @@ from constructs import Construct
 class AptitudesStack(Construct):
     """Stack para funcionalidad de Aptitudes"""
     
-    def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
+    def __init__(self, scope: Construct, construct_id: str, database_stack, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
         
-        # Crear tabla de aptitudes
-        self.aptitudes_table = dynamodb.Table(
-            self,
-            "AptitudesTable",
-            table_name="AptitudesTable",
-            partition_key=dynamodb.Attribute(
-                name="aptitud",
-                type=dynamodb.AttributeType.STRING
-            ),
-            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST
-        )
+        # Usar tabla del database_stack
+        self.aptitudes_table = database_stack.aptitudes_table
         
         # Lambda unificada para gestión de aptitudes
         self.aptitudes_function = _lambda.Function(

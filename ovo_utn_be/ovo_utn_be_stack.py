@@ -1,11 +1,11 @@
 from aws_cdk import (
     Stack,
-    aws_apigateway as apigw,
-    aws_dynamodb as dynamodb
+    aws_apigateway as apigw
 )
 from constructs import Construct
 
 # Importar stacks modulares
+from .stacks.database_stack import DatabaseStack
 from .stacks.hello_stack import HelloStack
 from .stacks.chat_stack import ChatStack
 from .stacks.aptitudes_stack import AptitudesStack
@@ -16,32 +16,8 @@ class OvoUtnBeStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
         
-        # Crear tablas DynamoDB centrales
-        quota_table = dynamodb.Table(
-            self,
-            "BedrockChatbotQuota",
-            table_name="BedrockChatbotQuota",
-            partition_key=dynamodb.Attribute(
-                name="UserID",
-                type=dynamodb.AttributeType.STRING
-            ),
-            sort_key=dynamodb.Attribute(
-                name="Date",
-                type=dynamodb.AttributeType.STRING
-            ),
-            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST
-        )
-        
-        progress_table = dynamodb.Table(
-            self,
-            "BedrockChatProgress",
-            table_name="BedrockChatProgress",
-            partition_key=dynamodb.Attribute(
-                name="ChatID",
-                type=dynamodb.AttributeType.STRING
-            ),
-            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST
-        )
+        # Crear stack de base de datos centralizado
+        database_stack = DatabaseStack(self, "DatabaseStack")
         
         # Crear API Gateway central
         api = apigw.RestApi(
@@ -51,10 +27,10 @@ class OvoUtnBeStack(Stack):
             description="API para OVO"
         )
         
-        # Inicializar stacks modulares
+        # Inicializar stacks modulares (sin pasar tablas)
         hello_stack = HelloStack(self, "HelloStack")
-        chat_stack = ChatStack(self, "ChatStack", quota_table, progress_table)
-        aptitudes_stack = AptitudesStack(self, "AptitudesStack")
+        chat_stack = ChatStack(self, "ChatStack", database_stack)
+        aptitudes_stack = AptitudesStack(self, "AptitudesStack", database_stack)
         
         # Agregar rutas al API Gateway
         hello_stack.add_to_api(api)
