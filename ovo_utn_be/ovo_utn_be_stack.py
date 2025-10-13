@@ -13,8 +13,8 @@ class OvoUtnBeStack(Stack):
         fn = _lambda.Function(
             self,
             "MyFunction",
-            runtime=_lambda.Runtime.NODEJS_LATEST,
-            handler="index.handler",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="app.handler",
             code=_lambda.Code.from_asset("lib/lambda-handler")
         )
         
