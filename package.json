@@ -1,0 +1,7 @@
+{
+  "name": "ovo-utn-be",
+  "scripts": {
+    "deploy": "./scripts/deploy.sh",
+    "synth": "./scripts/synth.sh"
+  }
+}

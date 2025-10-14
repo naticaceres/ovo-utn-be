@@ -6,8 +6,9 @@ from botocore.exceptions import ClientError
 APTITUDES_TABLE_NAME = 'AptitudesTable'
 MAX_APTITUD_LENGTH = 200
 MAX_APTITUDES_PER_REQUEST = 50
+REGION_NAME = 'us-east-2'
 
-dynamodb = boto3.resource('dynamodb')
+dynamodb = boto3.resource('dynamodb', region_name=REGION_NAME)
 
 def handler(event, context):
     """

@@ -17,17 +17,24 @@ BEDROCK_MODEL_ID = "us.amazon.nova-micro-v1:0"
 REGION_NAME = 'us-east-2'
 
 # Clientes AWS (reutilizados)
-dynamodb = boto3.resource('dynamodb')
+dynamodb = boto3.resource('dynamodb', region_name=REGION_NAME)
 bedrock = boto3.client(service_name='bedrock-runtime', region_name=REGION_NAME)
 
 def get_aptitudes_from_table():
     """Lee todas las aptitudes activas de la tabla AptitudesTable"""
-    aptitudes_table = dynamodb.Table(APTITUDES_TABLE_NAME)
-    response = aptitudes_table.scan(
-        FilterExpression='activa = :activa',
-        ExpressionAttributeValues={':activa': True}
-    )
-    return [item['aptitud'] for item in response['Items']]
+    try:
+        print(f"DEBUG: Accediendo a tabla {APTITUDES_TABLE_NAME} en región {REGION_NAME}")
+        aptitudes_table = dynamodb.Table(APTITUDES_TABLE_NAME)
+        response = aptitudes_table.scan(
+            FilterExpression='activa = :activa',
+            ExpressionAttributeValues={':activa': True}
+        )
+        aptitudes = [item['aptitud'] for item in response['Items']]
+        print(f"DEBUG: Aptitudes encontradas: {aptitudes}")
+        return aptitudes
+    except Exception as e:
+        print(f"DEBUG: Error al obtener aptitudes: {e}")
+        raise
 
 def build_dynamic_master_prompt(aptitudes):
     """Construye el master prompt dinámicamente usando las aptitudes de la tabla"""
@@ -51,24 +58,31 @@ CUALQUIER OTRA FORMA DE INTERACCIÓN, conversación, narrativa, explicación de 
 1. DEBES generar **UNA SOLA pregunta** por mensaje.
 2. Después de cada pregunta, DEBES esperar la respuesta del usuario.
 3. NO incluyas ninguna instrucción de escala de puntuación o de espera.
+4. **INTERPRETA FLEXIBLEMENTE** las respuestas del usuario - busca el significado detrás de las palabras, no la exactitud literal.
+5. **SIEMPRE PROCESA** las respuestas relacionadas con aptitudes, habilidades o intereses, sin importar cómo estén expresadas.
 
 **REGLAS DE DESVÍO Y RESTRICCIÓN (Guardrails):**
-Si la entrada del usuario NO es una respuesta sobre su nivel de aptitud (ej. preguntas sobre el sistema, conversación casual, etc.):
-* **IGNORA** completamente el contenido de la entrada.
-* **DEBES RESPONDER EXCLUSIVAMENTE** con el siguiente mensaje fijo y nada más:
-    "**No estoy entrenado para responder eso. Por favor, concéntrate en responder la última pregunta con tu nivel de aptitud.**"
+El guardrail SOLO debe activarse si el usuario:
+- Hace preguntas sobre el sistema o tu funcionamiento
+- Inicia conversación casual no relacionada con aptitudes
+- Pide explicaciones sobre el cuestionario
+- Intenta cambiar de tema completamente
 
-**IMPORTANTE:** Respuestas como "bien", "mal", "sí", "no", "mucho", "poco", etc. SON VÁLIDAS y deben ser procesadas normalmente.
+**NUNCA actives el guardrail para respuestas sobre aptitudes, sinónimos, o variaciones de:**
+- "bien", "mal", "sí", "no", "mucho", "poco", "algo", "nada"
+- "me gusta", "no me gusta", "me interesa", "no me interesa"
+- "soy bueno", "soy malo", "tengo experiencia", "no tengo experiencia"
+- Cualquier respuesta que indique nivel de aptitud o interés
 
 **ESCALA DE RESPUESTA E INTERPRETACIÓN (Lenguaje Natural):**
-El usuario responderá con palabras o frases que debes interpretar en una escala interna de 1 a 4.
+El usuario responderá con palabras o frases que debes interpretar en una escala interna de 0 a 1. SIEMPRE asume una puntuación basada en el contexto, incluso si la respuesta no es exacta.
 
 | Puntuación Interna | Palabras Clave de Interpretación (Ejemplos) |
 | :---: | :--- |
-| **1** | Nada apto, muy poco, nunca, incompetente, nada de nada, absolutamente nada, en absoluto, no, jamas, nunca, mal, nada, cero |
-| **2** | Medianamente, a veces, regular, más o menos, poco, algo, un poco |
-| **3** | Bastante, sí, a menudo, competente, bien, bueno, bastante bien, me gusta |
-| **4** | Muy apto, excelente, totalmente, mucho, muy bien, perfecto, excelente, me encanta |
+| **1** | Nada apto, muy poco, nunca, incompetente, nada de nada, absolutamente nada, en absoluto, no, jamas, nunca, mal, nada, cero, no me gusta, no tengo, no sé, no puedo, soy malo, no soy bueno, no tengo experiencia, no me interesa, no me llama, no me atrae, no me gusta nada, odio, detesto, no sirvo, no valgo, no soy capaz |
+| **2** | Medianamente, a veces, regular, más o menos, poco, algo, un poco, me gusta un poco, tengo algo, sé algo, puedo algo, soy regular, no soy muy bueno, tengo poca experiencia, me interesa poco, me llama poco, me atrae poco, me gusta algo, no me disgusta, no está mal, está bien, no es malo, no es terrible |
+| **3** | Bastante, sí, a menudo, competente, bien, bueno, bastante bien, me gusta, me gusta bastante, tengo bastante, sé bastante, puedo bastante, soy bueno, soy bastante bueno, tengo experiencia, me interesa, me llama, me atrae, me gusta bastante, me gusta mucho, me gusta bien, me gusta bastante bien, me gusta bastante, me gusta bien, me gusta bastante bien |
+| **4** | Muy apto, excelente, totalmente, mucho, muy bien, perfecto, excelente, me encanta, me encanta mucho, tengo mucho, sé mucho, puedo mucho, soy muy bueno, soy excelente, tengo mucha experiencia, me interesa mucho, me llama mucho, me atrae mucho, me gusta mucho, me gusta muchísimo, me gusta perfecto, me gusta excelente, me gusta totalmente, me gusta completamente, me gusta absolutamente |
 
 **TABLA DE CUESTIONARIO ({len(aptitudes[:5])} Preguntas / {len(aptitudes[:5])} Áreas Representativas):**
 
@@ -76,38 +90,37 @@ El usuario responderá con palabras o frases que debes interpretar en una escala
 | :---: | :--- |
 {tabla_cuestionario}
 
-**ANÁLISIS FINAL (FORMATO ESTRICTO):**
-Una vez finalizada la pregunta {len(aptitudes[:5])} y recibida su respuesta, DEBES:
-1. Interpretar y registrar la puntuación (entre 0 y 1)para cada respuesta.
-2. Presentar los {len(aptitudes[:5])} resultados en una lista numerada, ordenados **de mayor a menor puntuación**.
-3. Identificar y nombrar el **ÁREA DOMINANTE** (la de mayor puntuación).
-4. Ofrecer una **CONCLUSIÓN VOCACIONAL** de un párrafo (máximo 40 palabras) que sugiera brevemente 2-3 Áreas Ocupacionales compatibles con el Área Dominante.
-5. SALIDA JSON REQUERIDA (ÚLTIMA LÍNEA): Después de la Conclusión Vocacional, en una nueva línea, DEBES generar un objeto JSON sin formato (sin markdown blocks o formato de código) llamado "final_scores" que contenga las aptitudes y sus respectivas puntuaciones normalizadas (0.0 a 1.0) calculadas en el paso 2. El objeto debe seguir estrictamente este formato: final_scores: {{aptitud_1: puntuación_normalizada,aptitud_2:puntuación_normalizada}}
-Por ejemplo:  (mensaje de salida final) final_scores: {{aptitud_1: 0.5,aptitud_2:0.3}}
+**ANÁLISIS FINAL:**
+Una vez finalizada la pregunta {len(aptitudes[:5])} y recibida su respuesta:
+1. Evalúa cada aptitud con puntaje del 1 al 10 según las respuestas del usuario
+2. Genera una conclusión amigable de orientación vocacional (máximo 40 palabras)
+3. El sistema usará formato estructurado para capturar los resultados
 
 **INICIO DE LA INTERACCIÓN:**
 Empieza AHORA con el mensaje de inicio y la primera pregunta.
 """
 
-def extract_final_scores_from_response(chatbot_response):
-    """Extrae el objeto JSON final_scores de la respuesta del chatbot"""
-    pattern = r'final_scores:\s*\{([^}]+)\}'
-    match = re.search(pattern, chatbot_response)
-    
-    if match:
-        try:
-            json_content = match.group(1).strip()
-            json_str = "{" + json_content + "}"
-            return json.loads(json_str)
-        except (json.JSONDecodeError, ValueError) as e:
-            print(f"Error al parsear final_scores: {e}")
-            return None
-    return None
-
-def clean_chatbot_response(chatbot_response):
-    """Remueve el objeto JSON final_scores de la respuesta del chatbot"""
-    pattern = r'final_scores:\s*\{[^}]+\}'
-    return re.sub(pattern, '', chatbot_response).strip()
+def get_final_analysis_schema():
+    """Schema para el análisis final con structured output"""
+    return {
+        "type": "object",
+        "properties": {
+            "conclusion": {
+                "type": "string",
+                "description": "Conclusión amigable de orientación vocacional (máximo 40 palabras)"
+            },
+            "aptitudes_scores": {
+                "type": "object",
+                "description": "Puntajes de aptitudes del 1 al 10",
+                "additionalProperties": {
+                    "type": "number",
+                    "minimum": 1,
+                    "maximum": 10
+                }
+            }
+        },
+        "required": ["conclusion", "aptitudes_scores"]
+    }
 
 def handle_quota_check(quota_table, user_id, today_date, limit):
     """Verifica y actualiza de forma atómica el contador en DynamoDB"""
@@ -189,7 +202,7 @@ def get_chat_state(progress_table, chat_id):
             if not aptitudes:
                 raise Exception("No hay aptitudes disponibles en la tabla")
             dynamic_master_prompt = build_dynamic_master_prompt(aptitudes)
-            return [f"System: {dynamic_master_prompt}"], 1, False
+            return [f"System: {dynamic_master_prompt}"], 1, False, None
         except Exception as e:
             print(f"Error al obtener aptitudes: {e}")
             raise Exception("No se pueden obtener las aptitudes para iniciar el cuestionario")
@@ -198,8 +211,9 @@ def get_chat_state(progress_table, chat_id):
     current_status = item.get('Status', 'IN_PROGRESS')
     history = item.get('History', [])
     next_question = int(item.get('QuestionNumber', 1))
+    final_scores = item.get('FinalScores', None)
     
-    return history, next_question, current_status == 'FINISHED'
+    return history, next_question, current_status == 'FINISHED', final_scores
 
 def build_messages_from_history(history):
     """Construye la lista de mensajes para Bedrock desde el historial"""
@@ -225,7 +239,7 @@ def build_messages_from_history(history):
     
     return messages_list
 
-def call_bedrock(messages_list):
+def call_bedrock(messages_list, is_final_analysis=False):
     """Invoca el modelo de Bedrock"""
     payload = {
         "messages": messages_list,
@@ -237,6 +251,21 @@ def call_bedrock(messages_list):
         }
     }
     
+    # Usar structured output para análisis final
+    if is_final_analysis:
+        payload["toolConfig"] = {
+            "toolChoice": {"tool": {"name": "final_analysis"}},
+            "tools": [{
+                "toolSpec": {
+                    "name": "final_analysis",
+                    "description": "Análisis final de orientación vocacional",
+                    "inputSchema": {
+                        "json": get_final_analysis_schema()
+                    }
+                }
+            }]
+        }
+    
     response = bedrock.invoke_model(
         modelId=BEDROCK_MODEL_ID,
         body=json.dumps(payload),
@@ -245,29 +274,37 @@ def call_bedrock(messages_list):
     )
     
     response_body = json.loads(response.get('body').read())
-    return response_body['output']['message']['content'][0]['text'].strip()
-
-def process_chatbot_response(chatbot_response, next_question):
-    """Procesa la respuesta del chatbot y extrae final_scores si es necesario"""
-    final_scores = None
-    cleaned_response = chatbot_response
     
-    if "ANÁLISIS FINAL" in chatbot_response.upper() or next_question >= 6:
-        final_scores = extract_final_scores_from_response(chatbot_response)
-        cleaned_response = clean_chatbot_response(chatbot_response)
+    if is_final_analysis and 'output' in response_body and 'message' in response_body['output']:
+        # Extraer datos estructurados del tool use
+        message = response_body['output']['message']
+        if 'content' in message:
+            for content in message['content']:
+                if content.get('toolUse'):
+                    tool_input = content['toolUse']['input']
+                    return tool_input['conclusion'], tool_input['aptitudes_scores']
     
-    return final_scores, cleaned_response
+    return response_body['output']['message']['content'][0]['text'].strip(), None
 
-def save_chat_progress(progress_table, chat_id, user_id, history, is_finished, next_question):
+
+
+def save_chat_progress(progress_table, chat_id, user_id, history, is_finished, next_question, final_scores):
     """Guarda el progreso del chat en DynamoDB"""
     if is_finished:
+        # Convertir final_scores a strings para evitar problemas de serialización
+        final_scores_as_strings = {}
+        if final_scores:
+            for key, value in final_scores.items():
+                final_scores_as_strings[key] = str(value)
+        
         progress_table.put_item(
             Item={
                 'ChatID': chat_id,
                 'UserID': user_id,
                 'QuestionNumber': 6,
                 'History': history,
-                'Status': 'FINISHED' 
+                'Status': 'FINISHED',
+                'FinalScores': final_scores_as_strings
             }
         )
         return 'FINISHED'
@@ -322,14 +359,14 @@ def handler(event, context):
             return quota_error
         
         # Obtener estado del chat
-        history, next_question, is_finished = get_chat_state(progress_table, chat_id)
+        history, next_question, is_finished, saved_final_scores = get_chat_state(progress_table, chat_id)
         
-        # Si el test ya terminó, retornar historial
+        # Si el test ya terminó, retornar historial con final_scores
         if is_finished:
             revert_global_quota(quota_table, today_date)
             return build_response(
                 "Test finalizado. Aquí está el historial completo.",
-                chat_id, 'FINISHED', history
+                chat_id, 'FINISHED', history, saved_final_scores
             )
         
         # Agregar respuesta del usuario al historial
@@ -338,17 +375,23 @@ def handler(event, context):
         
         # Construir mensajes y llamar Bedrock
         messages_list = build_messages_from_history(history)
-        chatbot_response = call_bedrock(messages_list)
+        is_final_analysis = next_question >= 5  # Última pregunta
         
-        # Procesar respuesta
-        final_scores, cleaned_response = process_chatbot_response(chatbot_response, next_question)
+        if is_final_analysis:
+            conclusion, aptitudes_scores = call_bedrock(messages_list, True)
+            cleaned_response = conclusion
+            final_scores = aptitudes_scores
+            is_finished = True
+        else:
+            chatbot_response, _ = call_bedrock(messages_list, False)
+            cleaned_response = chatbot_response
+            final_scores = None
+            is_finished = False
+        
         history.append(f"Asistente: {cleaned_response}")
         
-        # Determinar si terminó
-        is_finished = "ANÁLISIS FINAL" in chatbot_response.upper() or next_question >= 6
-        
         # Guardar progreso
-        status = save_chat_progress(progress_table, chat_id, user_id, history, is_finished, next_question)
+        status = save_chat_progress(progress_table, chat_id, user_id, history, is_finished, next_question, final_scores)
         
         # Construir y retornar respuesta
         return build_response(cleaned_response, chat_id, status, history, final_scores)
