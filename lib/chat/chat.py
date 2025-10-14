@@ -171,7 +171,13 @@ def check_quotas(quota_table, user_id, today_date):
         if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
             if 'GLOBAL_USER_ID' in str(e):
                 return {
-                    'statusCode': 429, 
+                    'statusCode': 429,
+                    'headers': {
+                        "Content-Type": "application/json",
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Methods": "POST, OPTIONS",
+                        "Access-Control-Allow-Headers": "Content-Type, Authorization"
+                    },
                     'body': json.dumps({
                         'error': 'Global Quota Exceeded', 
                         'message': f'Se superó el límite global de {GLOBAL_REQUEST_LIMIT} solicitudes.'
@@ -180,7 +186,13 @@ def check_quotas(quota_table, user_id, today_date):
             else:
                 revert_global_quota(quota_table, today_date)
                 return {
-                    'statusCode': 429, 
+                    'statusCode': 429,
+                    'headers': {
+                        "Content-Type": "application/json",
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Methods": "POST, OPTIONS",
+                        "Access-Control-Allow-Headers": "Content-Type, Authorization"
+                    },
                     'body': json.dumps({
                         'error': 'User Quota Exceeded', 
                         'message': f'Has superado tu límite diario de {USER_REQUEST_LIMIT} solicitudes.'
@@ -335,12 +347,29 @@ def build_response(cleaned_response, chat_id, status, history, final_scores=None
     
     return {
         'statusCode': 200,
-        'headers': {"Content-Type": "application/json"},
+        'headers': {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization"
+        },
         'body': json.dumps(response_data)
     }
 
 def handler(event, context):
     """Función principal de la Lambda"""
+    # Manejar solicitudes OPTIONS para CORS
+    if event.get('httpMethod') == 'OPTIONS':
+        return {
+            'statusCode': 200,
+            'headers': {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type, Authorization"
+            },
+            'body': ''
+        }
+    
     today_date = date.today().isoformat()
     quota_table = dynamodb.Table(QUOTA_TABLE_NAME)
     progress_table = dynamodb.Table(PROGRESS_TABLE_NAME)
@@ -405,5 +434,11 @@ def handler(event, context):
         
         return {
             'statusCode': 500,
+            'headers': {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type, Authorization"
+            },
             'body': json.dumps({'error': 'Error interno del servidor', 'detail': str(e)})
         }
