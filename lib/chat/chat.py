@@ -154,11 +154,12 @@ def validate_request(body):
     user_id = body.get('UserID')
     chat_id = body.get('ChatID')
     
-    if not all([user_id, chat_id]):
+    if not all([chat_id]):
         return None, {
             'statusCode': 400,
-            'body': json.dumps({'error': 'Faltan parámetros: UserID y ChatID son obligatorios.'})
+            'body': json.dumps({'error': 'Faltan parámetros: ChatID son obligatorios.'})
         }
+    user_id = user_id if user_id else 'ANONYMOUS_USER'
     
     return (user_id, body.get('prompt'), chat_id), None
 
