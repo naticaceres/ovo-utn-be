@@ -32,8 +32,8 @@ class TestChatUtils(unittest.TestCase):
         prompt = chat_module.build_dynamic_master_prompt(sample)
         self.assertIn("Apt1", prompt)
         self.assertIn("Apt5", prompt)
-        # Only first 5 should be present
-        self.assertNotIn("Extra", prompt)
+        # Now includes all provided aptitudes (dynamic count)
+        self.assertIn("Extra", prompt)
 
     def _make_client_error(self):
         error_response = {'Error': {'Code': 'ConditionalCheckFailedException', 'Message': 'cond failed'}}
@@ -43,11 +43,9 @@ class TestChatUtils(unittest.TestCase):
     def test_check_quotas_success(self, mock_handle_quota):
         # simulate both calls succeed (handle_quota_check called twice without raising)
         mock_handle_quota.return_value = None
-        # call check_quotas - it calls handle_quota_check twice; we need to simulate no exceptions
         quota_table = MagicMock()
-        result, flag = chat_module.check_quotas(quota_table, 'user123', '2025-01-01')
+        result = chat_module.check_quotas(quota_table, 'user123', '2025-01-01')
         self.assertIsNone(result)
-        self.assertTrue(flag)
 
     @patch('lib.chat.chat.handle_quota_check')
     def test_check_quotas_user_exceeded_reverts_global(self, mock_handle_quota):
@@ -58,18 +56,18 @@ class TestChatUtils(unittest.TestCase):
             raise self._make_client_error()
         mock_handle_quota.side_effect = side_effect
         quota_table = MagicMock()
-        result, flag = chat_module.check_quotas(quota_table, 'user123', '2025-01-01')
+        result = chat_module.check_quotas(quota_table, 'user123', '2025-01-01')
         self.assertIsInstance(result, dict)
-        self.assertTrue(flag)  # flag True indicates global had been incremented before revert
+        self.assertEqual(result.get('statusCode'), 429)
 
     @patch('lib.chat.chat.handle_quota_check')
     def test_check_quotas_global_exceeded(self, mock_handle_quota):
         # first call raises ClientError for global
         mock_handle_quota.side_effect = self._make_client_error()
         quota_table = MagicMock()
-        result, flag = chat_module.check_quotas(quota_table, 'user123', '2025-01-01')
+        result = chat_module.check_quotas(quota_table, 'user123', '2025-01-01')
         self.assertIsInstance(result, dict)
-        self.assertFalse(flag)
+        self.assertEqual(result.get('statusCode'), 429)
 
 if __name__ == '__main__':
     unittest.main()

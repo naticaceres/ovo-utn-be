@@ -9,16 +9,54 @@ QUOTA_TABLE_NAME = 'BedrockChatbotQuota'
 PROGRESS_TABLE_NAME = 'BedrockChatProgress'
 APTITUDES_TABLE_NAME = 'AptitudesTable'
 
-USER_REQUEST_LIMIT = 25
-GLOBAL_REQUEST_LIMIT = 100
+USER_REQUEST_LIMIT = 250
+GLOBAL_REQUEST_LIMIT = 1000
 GLOBAL_USER_ID = 'GLOBAL_QUOTA_COUNTER'
 
 BEDROCK_MODEL_ID = "us.amazon.nova-micro-v1:0"
 REGION_NAME = 'us-east-2'
 
+# Límite máximo de preguntas
+MAX_QUESTIONS = 100
+
 # Clientes AWS (reutilizados)
 dynamodb = boto3.resource('dynamodb', region_name=REGION_NAME)
 bedrock = boto3.client(service_name='bedrock-runtime', region_name=REGION_NAME)
+
+def extract_final_scores_from_response(text):
+    """Extrae un diccionario de puntajes desde una línea 'final_scores: key: val, key: val'.
+
+    Retorna None si no se encuentra la línea.
+    """
+    if not text:
+        return None
+    match = re.search(r"final_scores\s*:\s*(.*)", text, flags=re.IGNORECASE)
+    if not match:
+        return None
+    payload = match.group(1)
+    results = {}
+    for part in payload.split(','):
+        key_val = part.strip()
+        if not key_val:
+            continue
+        m = re.match(r"([^:]+)\s*:\s*([-+]?\d*\.\d+|\d+)", key_val)
+        if m:
+            key = m.group(1).strip()
+            try:
+                val = float(m.group(2))
+            except ValueError:
+                continue
+            results[key] = val
+    return results if results else None
+
+
+def clean_chatbot_response(text):
+    """Elimina cualquier línea que contenga 'final_scores' y devuelve el resto limpio."""
+    if text is None:
+        return ''
+    lines = text.splitlines()
+    filtered = [ln for ln in lines if 'final_scores' not in ln.lower()]
+    return "\n".join(filtered).strip()
 
 def get_aptitudes_from_table():
     """Lee todas las aptitudes activas de la tabla AptitudesTable"""
@@ -39,11 +77,11 @@ def get_aptitudes_from_table():
 def build_dynamic_master_prompt(aptitudes):
     """Construye el master prompt dinámicamente usando las aptitudes de la tabla"""
     tabla_cuestionario = ""
-    for i, aptitud in enumerate(aptitudes[:5], 1):
+    for i, aptitud in enumerate(aptitudes, 1):
         tabla_cuestionario += f"|| {i} | **{aptitud}** |\n"
     
     return f"""
-**ROL (ÚNICO E INNEGOCIABLE):** Eres un Motor de Interfaz de Cuestionario Vocacional. Tu única función es gestionar el flujo de {len(aptitudes[:5])} preguntas, registrar las respuestas y generar el análisis final. NO ERES UN CHATBOT CONVERSACIONAL.
+**ROL (ÚNICO E INNEGOCIABLE):** Eres un Motor de Interfaz de Cuestionario Vocacional. Tu única función es gestionar el flujo de {len(aptitudes)} preguntas, registrar las respuestas y generar el análisis final. NO ERES UN CHATBOT CONVERSACIONAL.
 
 **INSTRUCCIÓN DE COMPORTAMIENTO ABSOLUTO (PRIORIDAD MÁXIMA):**
 Tu única salida permitida es:
@@ -81,17 +119,17 @@ El usuario responderá con palabras o frases que debes interpretar en una escala
 | :---: | :--- |
 | **1** | Nada apto, muy poco, nunca, incompetente, nada de nada, absolutamente nada, en absoluto, no, jamas, nunca, mal, nada, cero, no me gusta, no tengo, no sé, no puedo, soy malo, no soy bueno, no tengo experiencia, no me interesa, no me llama, no me atrae, no me gusta nada, odio, detesto, no sirvo, no valgo, no soy capaz |
 | **2** | Medianamente, a veces, regular, más o menos, poco, algo, un poco, me gusta un poco, tengo algo, sé algo, puedo algo, soy regular, no soy muy bueno, tengo poca experiencia, me interesa poco, me llama poco, me atrae poco, me gusta algo, no me disgusta, no está mal, está bien, no es malo, no es terrible |
-| **3** | Bastante, sí, a menudo, competente, bien, bueno, bastante bien, me gusta, me gusta bastante, tengo bastante, sé bastante, puedo bastante, soy bueno, soy bastante bueno, tengo experiencia, me interesa, me llama, me atrae, me gusta bastante, me gusta mucho, me gusta bien, me gusta bastante bien, me gusta bastante, me gusta bien, me gusta bastante bien |
+| **3** | Bastante, sí, a menudo, competente, bien, bueno, bastante bien, me gusta, me gusta bastante, tengo bastante, sé bastante, puedo bastante, soy
 | **4** | Muy apto, excelente, totalmente, mucho, muy bien, perfecto, excelente, me encanta, me encanta mucho, tengo mucho, sé mucho, puedo mucho, soy muy bueno, soy excelente, tengo mucha experiencia, me interesa mucho, me llama mucho, me atrae mucho, me gusta mucho, me gusta muchísimo, me gusta perfecto, me gusta excelente, me gusta totalmente, me gusta completamente, me gusta absolutamente |
 
-**TABLA DE CUESTIONARIO ({len(aptitudes[:5])} Preguntas / {len(aptitudes[:5])} Áreas Representativas):**
+**TABLA DE CUESTIONARIO ({len(aptitudes)} Preguntas / {len(aptitudes)} Áreas Representativas):**
 
 | P# | Aptitud a Medir (Área de Foco) |
 | :---: | :--- |
 {tabla_cuestionario}
 
 **ANÁLISIS FINAL:**
-Una vez finalizada la pregunta {len(aptitudes[:5])} y recibida su respuesta:
+Una vez finalizada la pregunta {len(aptitudes)} y recibida su respuesta:
 1. Evalúa cada aptitud con puntaje del 1 al 10 según las respuestas del usuario
 2. Genera una conclusión amigable de orientación vocacional (máximo 40 palabras)
 3. El sistema usará formato estructurado para capturar los resultados
@@ -214,8 +252,11 @@ def get_chat_state(progress_table, chat_id):
             aptitudes = get_aptitudes_from_table()
             if not aptitudes:
                 raise Exception("No hay aptitudes disponibles en la tabla")
-            dynamic_master_prompt = build_dynamic_master_prompt(aptitudes)
-            return [f"System: {dynamic_master_prompt}"], 1, False, None
+            # Limitar la cantidad de preguntas a MAX_QUESTIONS
+            limited_aptitudes = aptitudes[:MAX_QUESTIONS]
+            dynamic_master_prompt = build_dynamic_master_prompt(limited_aptitudes)
+            total_questions = len(limited_aptitudes)
+            return [f"System: {dynamic_master_prompt}"], 1, False, None, total_questions
         except Exception as e:
             print(f"Error al obtener aptitudes: {e}")
             raise Exception("No se pueden obtener las aptitudes para iniciar el cuestionario")
@@ -225,8 +266,17 @@ def get_chat_state(progress_table, chat_id):
     history = item.get('History', [])
     next_question = int(item.get('QuestionNumber', 1))
     final_scores = item.get('FinalScores', None)
+    # Intentar recuperar cantidad total de preguntas persistida
+    total_questions = int(item.get('TotalQuestions', 0)) if item.get('TotalQuestions') is not None else 0
+    if total_questions <= 0:
+        # Fallback: recalcular desde la tabla (cap MAX_QUESTIONS). Esto evita romper chats antiguos
+        try:
+            aptitudes = get_aptitudes_from_table()
+            total_questions = len(aptitudes[:MAX_QUESTIONS]) if aptitudes else 5
+        except Exception:
+            total_questions = 5
     
-    return history, next_question, current_status == 'FINISHED', final_scores
+    return history, next_question, current_status == 'FINISHED', final_scores, total_questions
 
 def build_messages_from_history(history):
     """Construye la lista de mensajes para Bedrock desde el historial"""
@@ -301,7 +351,7 @@ def call_bedrock(messages_list, is_final_analysis=False):
 
 
 
-def save_chat_progress(progress_table, chat_id, user_id, history, is_finished, next_question, final_scores):
+def save_chat_progress(progress_table, chat_id, user_id, history, is_finished, next_question, final_scores, total_questions):
     """Guarda el progreso del chat en DynamoDB"""
     if is_finished:
         # Convertir final_scores a strings para evitar problemas de serialización
@@ -314,10 +364,11 @@ def save_chat_progress(progress_table, chat_id, user_id, history, is_finished, n
             Item={
                 'ChatID': chat_id,
                 'UserID': user_id,
-                'QuestionNumber': 6,
+                'QuestionNumber': total_questions + 1,
                 'History': history,
                 'Status': 'FINISHED',
-                'FinalScores': final_scores_as_strings
+                'FinalScores': final_scores_as_strings,
+                'TotalQuestions': total_questions
             }
         )
         return 'FINISHED'
@@ -329,7 +380,8 @@ def save_chat_progress(progress_table, chat_id, user_id, history, is_finished, n
                 'UserID': user_id,
                 'QuestionNumber': new_question_number,
                 'History': history,
-                'Status': 'IN_PROGRESS' 
+                'Status': 'IN_PROGRESS',
+                'TotalQuestions': total_questions
             }
         )
         return f'Waiting for Q{new_question_number}'
@@ -389,7 +441,7 @@ def handler(event, context):
             return quota_error
         
         # Obtener estado del chat
-        history, next_question, is_finished, saved_final_scores = get_chat_state(progress_table, chat_id)
+        history, next_question, is_finished, saved_final_scores, total_questions = get_chat_state(progress_table, chat_id)
         
         # Si el test ya terminó, retornar historial con final_scores
         if is_finished:
@@ -405,7 +457,8 @@ def handler(event, context):
         
         # Construir mensajes y llamar Bedrock
         messages_list = build_messages_from_history(history)
-        is_final_analysis = next_question >= 5  # Última pregunta
+        # Realizar análisis final solo cuando ya se hayan formulado y respondido todas las preguntas
+        is_final_analysis = next_question > total_questions
         
         if is_final_analysis:
             conclusion, aptitudes_scores = call_bedrock(messages_list, True)
@@ -421,7 +474,7 @@ def handler(event, context):
         history.append(f"Asistente: {cleaned_response}")
         
         # Guardar progreso
-        status = save_chat_progress(progress_table, chat_id, user_id, history, is_finished, next_question, final_scores)
+        status = save_chat_progress(progress_table, chat_id, user_id, history, is_finished, next_question, final_scores, total_questions)
         
         # Construir y retornar respuesta
         return build_response(cleaned_response, chat_id, status, history, final_scores)
