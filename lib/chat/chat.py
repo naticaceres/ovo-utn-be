@@ -9,8 +9,8 @@ QUOTA_TABLE_NAME = 'BedrockChatbotQuota'
 PROGRESS_TABLE_NAME = 'BedrockChatProgress'
 APTITUDES_TABLE_NAME = 'AptitudesTable'
 
-USER_REQUEST_LIMIT = 250
-GLOBAL_REQUEST_LIMIT = 1000
+USER_REQUEST_LIMIT = 550
+GLOBAL_REQUEST_LIMIT = 1500
 GLOBAL_USER_ID = 'GLOBAL_QUOTA_COUNTER'
 
 BEDROCK_MODEL_ID = "us.amazon.nova-micro-v1:0"
@@ -18,6 +18,8 @@ REGION_NAME = 'us-east-2'
 
 # Límite máximo de preguntas
 MAX_QUESTIONS = 100
+# Límite de caracteres para respuestas del usuario
+MAX_USER_INPUT_CHARS = 500
 
 # Clientes AWS (reutilizados)
 dynamodb = boto3.resource('dynamodb', region_name=REGION_NAME)
@@ -85,19 +87,53 @@ def build_dynamic_master_prompt(aptitudes):
 
 **INSTRUCCIÓN DE COMPORTAMIENTO ABSOLUTO (PRIORIDAD MÁXIMA):**
 Tu única salida permitida es:
-1. El mensaje de inicio (solo una vez).
-2. La siguiente pregunta del cuestionario (solo una vez por turno).
-3. El mensaje de error fijo (guardrail).
-4. El análisis final (solo una vez).
+1. El mensaje de inicio CON la primera pregunta incluida (solo una vez, en el primer mensaje DEBES incluir tanto la bienvenida como la primera pregunta).
+2. La siguiente pregunta del cuestionario (solo una vez por turno, solo una pregunta por mensaje).
+3. Los final_scores estructurados (solo una vez, cuando el usuario responda la última pregunta - NO generes ningún mensaje de texto, solo los final_scores en formato estructurado).
 
 CUALQUIER OTRA FORMA DE INTERACCIÓN, conversación, narrativa, explicación de tu rol, o respuesta a preguntas ajenas al cuestionario (ej. "¿qué más puedes hacer?", "cuéntame un cuento", "salúdame"), está **TERMINANTEMENTE PROHIBIDA**.
 
 **DIRECTIVA DE INTERACCIÓN CRÍTICA (Flujo Estricto Pregunta/Respuesta):**
-1. DEBES generar **UNA SOLA pregunta** por mensaje.
-2. Después de cada pregunta, DEBES esperar la respuesta del usuario.
-3. NO incluyas ninguna instrucción de escala de puntuación o de espera.
-4. **INTERPRETA FLEXIBLEMENTE** las respuestas del usuario - busca el significado detrás de las palabras, no la exactitud literal.
-5. **SIEMPRE PROCESA** las respuestas relacionadas con aptitudes, habilidades o intereses, sin importar cómo estén expresadas.
+1. En el PRIMER mensaje: DEBES incluir la bienvenida Y la primera pregunta juntas, sin separación.
+2. En los mensajes siguientes: DEBES generar **UNA SOLA pregunta** por mensaje. DETENTE INMEDIATAMENTE después de generar esa pregunta.
+3. NUNCA generes múltiples preguntas en un solo mensaje (excepto en el primer mensaje donde la bienvenida y la primera pregunta van juntas). NUNCA uses formato "Pregunta N:" ni numeración.
+4. Después de cada pregunta, DEBES esperar la respuesta del usuario.
+5. NO incluyas ninguna instrucción de escala de puntuación o de espera.
+6. NO menciones "Una vez finalizada" ni "Procederé a generar" en tus respuestas intermedias.
+7. **INTERPRETA FLEXIBLEMENTE** las respuestas del usuario - busca el significado detrás de las palabras, no la exactitud literal.
+8. **SIEMPRE PROCESA** las respuestas relacionadas con aptitudes, habilidades o intereses, sin importar cómo estén expresadas.
+
+**PERFIL DEL USUARIO (CONTEXTO CRÍTICO):**
+- El usuario es un ESTUDIANTE con muy poca o NULA experiencia profesional.
+- NO asumas que tiene experiencia laboral, ventas, trabajo en empresas, o situaciones profesionales.
+- Enfócate en situaciones ACADÉMICAS, ESCOLARES, proyectos estudiantiles, actividades extracurriculares, trabajos grupales, tareas escolares, hobbies, intereses personales, y experiencias de vida cotidiana.
+- Las preguntas deben ser accesibles para alguien que está explorando su vocación sin haber trabajado aún.
+
+**GUÍA DE REDACCIÓN DE PREGUNTAS (Calidad Clínica, Estilo Psicología Vocacional):**
+- Tu tono es profesional, cálido y focalizado, como un psicólogo especializado en orientación vocacional.
+- Cada pregunta debe explorar comportamientos observables, decisiones concretas, preferencias y experiencias reales relacionadas con la aptitud objetivo.
+- **CONTEXTO ESTUDIANTIL OBLIGATORIO:** Todas las preguntas deben referirse a situaciones escolares, académicas, proyectos estudiantiles, trabajos grupales, actividades extracurriculares, hobbies, intereses personales, o experiencias de vida cotidiana. NUNCA uses ejemplos de trabajo profesional, ventas, empresas, o experiencia laboral.
+- Evita preguntas genéricas del tipo "¿Cómo te sientes acerca de X?". En su lugar, usa mini-escenarios, ejemplos situacionales y recordatorios de experiencias estudiantiles o personales.
+- Varía la forma de las preguntas entre turnos para evitar repetición de patrones. No uses encabezados como "Pregunta N:" ni formato de lista; formula una frase clara y corta.
+- Mantén cada pregunta en UNA oración. No agregues agradecimientos ni transiciones ("gracias por tu respuesta", "vamos a la siguiente").
+- Acepta respuestas elaboradas en múltiples oraciones.
+ 
+ **ESTRATEGIA DE GENERACIÓN ESPONTÁNEA (Adaptación al usuario):**
+ - Genera preguntas de forma libre, sin plantillas fijas ni fórmulas repetidas.
+ - Adapta tono, vocabulario y longitud a cómo se expresa el usuario (espeja su estilo comunicativo).
+ - Prioriza preguntas conductuales y situacionales basadas en contexto estudiantil; referencia elementos concretos mencionados por el usuario cuando existan.
+ - Cuando sea útil para evidenciar la aptitud, plantea decisiones breves o pequeños dilemas realistas en contextos escolares, académicos o de vida estudiantil.
+ - Evita repetir el mismo inicio o estructura en preguntas consecutivas.
+ - **NUNCA** uses ejemplos de: trabajo profesional, ventas, clientes, empresas, jefes, colegas profesionales, o cualquier situación laboral.
+
+Prohibiciones estrictas para cada pregunta:
+- No uses plantillas fijas ni fórmulas repetidas para formular preguntas, cada pregunta debe ser distinta de la anterior.
+- No antepongas "Pregunta N:" ni mensajes de transición.
+- No menciones escalas ni pidas que el usuario se puntúe.
+- **PROHIBIDO:** Asumir experiencia profesional, laboral, de ventas, o situaciones empresariales. El usuario es un estudiante sin experiencia profesional.
+
+**MANEJO DE DESVÍOS Y REPREGUNTAS DEL USUARIO:**
+- Si el usuario formula una pregunta, pide explicaciones, intenta conversar, o se desvía del tema, RESPONDE EXCLUSIVAMENTE con el siguiente mensaje fijo (sin agregar nada más): “Para continuar, responde la ultima pregunta. No puedo atender otras consultas.”\n- Después del guardrail, en el siguiente turno, retoma con una nueva pregunta válida solo si el usuario vuelve a responder sobre la aptitud.
 
 **REGLAS DE DESVÍO Y RESTRICCIÓN (Guardrails):**
 El guardrail SOLO debe activarse si el usuario:
@@ -105,22 +141,16 @@ El guardrail SOLO debe activarse si el usuario:
 - Inicia conversación casual no relacionada con aptitudes
 - Pide explicaciones sobre el cuestionario
 - Intenta cambiar de tema completamente
+- Responde con una pregunta
 
-**NUNCA actives el guardrail para respuestas sobre aptitudes, sinónimos, o variaciones de:**
-- "bien", "mal", "sí", "no", "mucho", "poco", "algo", "nada"
-- "me gusta", "no me gusta", "me interesa", "no me interesa"
-- "soy bueno", "soy malo", "tengo experiencia", "no tengo experiencia"
-- Cualquier respuesta que indique nivel de aptitud o interés
+**NUNCA actives el guardrail para respuestas sobre aptitudes o cualquier respuesta que indique nivel de aptitud o interés**
 
-**ESCALA DE RESPUESTA E INTERPRETACIÓN (Lenguaje Natural):**
-El usuario responderá con palabras o frases que debes interpretar en una escala interna de 0 a 1. SIEMPRE asume una puntuación basada en el contexto, incluso si la respuesta no es exacta.
-
-| Puntuación Interna | Palabras Clave de Interpretación (Ejemplos) |
-| :---: | :--- |
-| **1** | Nada apto, muy poco, nunca, incompetente, nada de nada, absolutamente nada, en absoluto, no, jamas, nunca, mal, nada, cero, no me gusta, no tengo, no sé, no puedo, soy malo, no soy bueno, no tengo experiencia, no me interesa, no me llama, no me atrae, no me gusta nada, odio, detesto, no sirvo, no valgo, no soy capaz |
-| **2** | Medianamente, a veces, regular, más o menos, poco, algo, un poco, me gusta un poco, tengo algo, sé algo, puedo algo, soy regular, no soy muy bueno, tengo poca experiencia, me interesa poco, me llama poco, me atrae poco, me gusta algo, no me disgusta, no está mal, está bien, no es malo, no es terrible |
-| **3** | Bastante, sí, a menudo, competente, bien, bueno, bastante bien, me gusta, me gusta bastante, tengo bastante, sé bastante, puedo bastante, soy
-| **4** | Muy apto, excelente, totalmente, mucho, muy bien, perfecto, excelente, me encanta, me encanta mucho, tengo mucho, sé mucho, puedo mucho, soy muy bueno, soy excelente, tengo mucha experiencia, me interesa mucho, me llama mucho, me atrae mucho, me gusta mucho, me gusta muchísimo, me gusta perfecto, me gusta excelente, me gusta totalmente, me gusta completamente, me gusta absolutamente |
+**CRITERIOS DE INTERPRETACIÓN DE RESPUESTAS (Semántica sobre palabras clave):**
+- Interpreta el significado completo de la respuesta.
+- Considera: intensidad, frecuencia, autonomía, consistencia temporal, evidencia conductual y recencia.
+- Tolera ambigüedad y varianza cultural; infiere con prudencia a partir del propio contexto del usuario.
+- No menciones escalas ni pidas auto-puntuación en ningún momento.
+- Mantén una evaluación latente interna. En el análisis final, transforma esa evaluación a una escala 1–10 por aptitud, proporcional a la evidencia observada.
 
 **TABLA DE CUESTIONARIO ({len(aptitudes)} Preguntas / {len(aptitudes)} Áreas Representativas):**
 
@@ -129,27 +159,34 @@ El usuario responderá con palabras o frases que debes interpretar en una escala
 {tabla_cuestionario}
 
 **ANÁLISIS FINAL:**
-Una vez finalizada la pregunta {len(aptitudes)} y recibida su respuesta:
+Una vez finalizada la pregunta {len(aptitudes)} y recibida su respuesta del usuario:
 1. Evalúa cada aptitud con puntaje del 1 al 10 según las respuestas del usuario
-2. Genera una conclusión amigable de orientación vocacional (máximo 40 palabras)
-3. El sistema usará formato estructurado para capturar los resultados
+2. El sistema usará formato estructurado para capturar SOLO los final_scores (aptitudes_scores)
+3. NO generes ningún mensaje de texto, conclusión ni respuesta visible al usuario
+4. Solo proporciona los final_scores en el formato estructurado requerido
 
 **INICIO DE LA INTERACCIÓN:**
-Empieza AHORA con el mensaje de inicio y la primera pregunta.
+Empieza AHORA con un mensaje que incluya:
+1. Una breve bienvenida al cuestionario vocacional (máximo 2 oraciones).
+2. Inmediatamente después, sin saltos de línea ni separación, la PRIMERA PREGUNTA del cuestionario relacionada con la primera aptitud de la tabla.
+
+IMPORTANTE: El mensaje de inicio y la primera pregunta DEBEN estar en el mismo mensaje, sin separación. No generes solo la bienvenida y esperes; incluye ambos elementos juntos.
 """
 
 def get_final_analysis_schema():
-    """Schema para el análisis final con structured output"""
+    """
+    Schema para el análisis final con structured output.
+    Solo retorna los final_scores (aptitudes_scores), sin conclusión de texto.
+    
+    Referencia: AWS Bedrock Structured Outputs
+    https://docs.aws.amazon.com/bedrock/latest/userguide/model-customization-structured-outputs.html
+    """
     return {
         "type": "object",
         "properties": {
-            "conclusion": {
-                "type": "string",
-                "description": "Conclusión amigable de orientación vocacional (máximo 40 palabras)"
-            },
             "aptitudes_scores": {
                 "type": "object",
-                "description": "Puntajes de aptitudes del 1 al 10",
+                "description": "Puntajes de aptitudes del 1 al 10. Debe incluir todas las aptitudes evaluadas.",
                 "additionalProperties": {
                     "type": "number",
                     "minimum": 1,
@@ -157,7 +194,7 @@ def get_final_analysis_schema():
                 }
             }
         },
-        "required": ["conclusion", "aptitudes_scores"]
+        "required": ["aptitudes_scores"]
     }
 
 def handle_quota_check(quota_table, user_id, today_date, limit):
@@ -191,15 +228,33 @@ def validate_request(body):
     """Valida los parámetros de la request"""
     user_id = body.get('UserID')
     chat_id = body.get('ChatID')
+    prompt = body.get('prompt')
     
     if not all([chat_id]):
         return None, {
             'statusCode': 400,
-            'body': json.dumps({'error': 'Faltan parámetros: ChatID son obligatorios.'})
+            'headers': {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type, Authorization"
+            },
+            'body': json.dumps({'error': 'Faltan parámetros: ChatID es obligatorio.'})
         }
     user_id = user_id if user_id else 'ANONYMOUS_USER'
+    if isinstance(prompt, str) and len(prompt) > MAX_USER_INPUT_CHARS:
+        return None, {
+            'statusCode': 400,
+            'headers': {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type, Authorization"
+            },
+            'body': json.dumps({'error': f'La respuesta excede el máximo de {MAX_USER_INPUT_CHARS} caracteres.'})
+        }
     
-    return (user_id, body.get('prompt'), chat_id), None
+    return (user_id, prompt, chat_id), None
 
 def check_quotas(quota_table, user_id, today_date):
     """Verifica las cuotas global y de usuario"""
@@ -256,7 +311,7 @@ def get_chat_state(progress_table, chat_id):
             limited_aptitudes = aptitudes[:MAX_QUESTIONS]
             dynamic_master_prompt = build_dynamic_master_prompt(limited_aptitudes)
             total_questions = len(limited_aptitudes)
-            return [f"System: {dynamic_master_prompt}"], 1, False, None, total_questions
+            return [f"System: {dynamic_master_prompt}"], 1, False, None, total_questions, True
         except Exception as e:
             print(f"Error al obtener aptitudes: {e}")
             raise Exception("No se pueden obtener las aptitudes para iniciar el cuestionario")
@@ -276,7 +331,7 @@ def get_chat_state(progress_table, chat_id):
         except Exception:
             total_questions = 5
     
-    return history, next_question, current_status == 'FINISHED', final_scores, total_questions
+    return history, next_question, current_status == 'FINISHED', final_scores, total_questions, False
 
 def build_messages_from_history(history):
     """Construye la lista de mensajes para Bedrock desde el historial"""
@@ -302,15 +357,113 @@ def build_messages_from_history(history):
     
     return messages_list
 
+def get_last_assistant_message(history):
+    """Obtiene el último mensaje del asistente del historial."""
+    for line in reversed(history):
+        if line.startswith("Asistente:"):
+            return line[11:].strip()
+    return ""
+
+def extract_first_question(text):
+    """
+    Extrae solo la primera pregunta o mensaje del texto generado por el modelo.
+    Detiene en la primera pregunta que encuentre o en patrones que indiquen múltiples preguntas.
+    
+    Esta función implementa un post-procesamiento defensivo para asegurar que solo
+    se devuelva una pregunta, incluso si el modelo genera múltiples.
+    
+    Referencia: AWS Bedrock Inference Parameters
+    https://docs.aws.amazon.com/bedrock/latest/userguide/inference-parameters.html
+    """
+    if not text:
+        return text
+    
+    # Dividir por líneas para analizar
+    lines = text.split('\n')
+    first_question_parts = []
+    found_content = False
+    
+    # Patrones que indican inicio de una nueva pregunta (stop patterns)
+    stop_patterns = [
+        r'^\*\*Pregunta\s+\d+:\*\*',  # **Pregunta N:**
+        r'^Pregunta\s+\d+:',  # Pregunta N:
+        r'^\d+\.\s+',  # Número seguido de punto
+        r'^Una vez finalizada',  # "Una vez finalizada..."
+        r'^Procederé a generar',  # "Procederé a generar..."
+    ]
+    
+    for line in lines:
+        line_stripped = line.strip()
+        
+        # Si encontramos una línea vacía después de contenido, es un separador - detener
+        if not line_stripped:
+            if found_content:
+                break
+            continue
+        
+        # Verificar si esta línea coincide con un patrón de stop
+        should_stop = False
+        for pattern in stop_patterns:
+            if re.match(pattern, line_stripped, re.IGNORECASE):
+                should_stop = True
+                break
+        
+        if should_stop:
+            break
+        
+        first_question_parts.append(line_stripped)
+        found_content = True
+        
+        # Si la línea termina con "?" y ya tenemos contenido, probablemente es el final de la pregunta
+        if line_stripped.endswith('?'):
+            break
+    
+    result = ' '.join(first_question_parts).strip()
+    
+    # Si no encontramos nada útil, devolver el texto original truncado en la primera oración
+    if not result:
+        # Buscar la primera oración que termine con "?"
+        match = re.search(r'^[^?]*\?', text)
+        if match:
+            result = match.group(0).strip()
+        else:
+            # Si no hay "?", tomar la primera oración hasta el primer punto
+            match = re.search(r'^[^.]*\.', text)
+            if match:
+                result = match.group(0).strip()
+            else:
+                # Fallback: primeros 200 caracteres
+                result = text[:200].strip()
+    
+    return result
+
 def call_bedrock(messages_list, is_final_analysis=False):
-    """Invoca el modelo de Bedrock"""
+    """
+    Invoca el modelo de Bedrock con configuración optimizada para generar una sola pregunta.
+    
+    Referencia: AWS Bedrock Runtime API - InvokeModel
+    https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_InvokeModel.html
+    """
     payload = {
         "messages": messages_list,
         "inferenceConfig": {
-            "maxTokens": 512,
+            # Reducido a 200 tokens para forzar una sola pregunta
+            # Referencia: AWS Bedrock Inference Parameters - maxTokens
+            # https://docs.aws.amazon.com/bedrock/latest/userguide/inference-parameters.html
+            "maxTokens": 200,
             "temperature": 0.1,
             "topP": 0.9,
-            "stopSequences": ["Usuario:", "Asistente:"]
+            # Stop sequences mejoradas para capturar patrones de múltiples preguntas
+            # Referencia: AWS Bedrock Inference Parameters - stopSequences
+            # https://docs.aws.amazon.com/bedrock/latest/userguide/inference-parameters.html
+            "stopSequences": [
+                "Usuario:",
+                "Asistente:",
+                "\n\n**Pregunta",
+                "\nPregunta ",
+                "Una vez finalizada",
+                "Procederé a generar"
+            ]
         }
     }
     
@@ -340,14 +493,28 @@ def call_bedrock(messages_list, is_final_analysis=False):
     
     if is_final_analysis and 'output' in response_body and 'message' in response_body['output']:
         # Extraer datos estructurados del tool use
+        # Referencia: AWS Bedrock Structured Outputs - Tool Use Response Format
+        # https://docs.aws.amazon.com/bedrock/latest/userguide/model-customization-structured-outputs.html
         message = response_body['output']['message']
         if 'content' in message:
             for content in message['content']:
                 if content.get('toolUse'):
                     tool_input = content['toolUse']['input']
-                    return tool_input['conclusion'], tool_input['aptitudes_scores']
+                    # Retornar solo aptitudes_scores (que son los final_scores)
+                    # No retornamos conclusion ya que no se necesita mensaje visible
+                    return '', tool_input.get('aptitudes_scores', {})
+        
+        # Si llegamos aquí, el structured output no se generó correctamente
+        raise Exception("No se pudo obtener structured output del análisis final. La respuesta no contiene toolUse.")
     
-    return response_body['output']['message']['content'][0]['text'].strip(), None
+    # Extraer texto de la respuesta (solo para preguntas normales, no análisis final)
+    raw_response = response_body['output']['message']['content'][0]['text'].strip()
+    
+    # Post-procesar para extraer solo la primera pregunta (no aplica para análisis final)
+    if not is_final_analysis:
+        raw_response = extract_first_question(raw_response)
+    
+    return raw_response, None
 
 
 
@@ -384,7 +551,7 @@ def save_chat_progress(progress_table, chat_id, user_id, history, is_finished, n
                 'TotalQuestions': total_questions
             }
         )
-        return f'Waiting for Q{new_question_number}'
+        return f'Waiting for {new_question_number} of {total_questions}'
 
 def build_response(cleaned_response, chat_id, status, history, final_scores=None):
     """Construye la respuesta final"""
@@ -434,14 +601,9 @@ def handler(event, context):
             return error_response
         
         user_id, prompt, chat_id = request_data
-        
-        # Verificar cuotas
-        quota_error = check_quotas(quota_table, user_id, today_date)
-        if quota_error:
-            return quota_error
-        
-        # Obtener estado del chat
-        history, next_question, is_finished, saved_final_scores, total_questions = get_chat_state(progress_table, chat_id)
+
+        # Obtener estado del chat (antes de cuotas para poder manejar recupero sin consumir cuota)
+        history, next_question, is_finished, saved_final_scores, total_questions, is_new_chat = get_chat_state(progress_table, chat_id)
         
         # Si el test ya terminó, retornar historial con final_scores
         if is_finished:
@@ -451,33 +613,60 @@ def handler(event, context):
                 chat_id, 'FINISHED', history, saved_final_scores
             )
         
+        # Si es un chat en progreso y no se recibió prompt, devolver historial sin avanzar (sin consumir cuota ni llamar a Bedrock)
+        if not is_new_chat and (prompt is None or (isinstance(prompt, str) and prompt.strip() == "")):
+            pending_question = get_last_assistant_message(history)
+            return build_response(
+                pending_question,
+                chat_id,
+                f'Waiting for {next_question} of {total_questions}',
+                history
+            )
+
         # Agregar respuesta del usuario al historial
-        if next_question > 1:
+        if next_question > 1 and isinstance(prompt, str) and prompt.strip() != "":
             history.append(f"Usuario: {prompt}")
+        
+        # Verificar cuotas (solo cuando vamos a invocar a Bedrock)
+        quota_error = check_quotas(quota_table, user_id, today_date)
+        if quota_error:
+            return quota_error
         
         # Construir mensajes y llamar Bedrock
         messages_list = build_messages_from_history(history)
-        # Realizar análisis final solo cuando ya se hayan formulado y respondido todas las preguntas
-        is_final_analysis = next_question > total_questions
         
-        if is_final_analysis:
-            conclusion, aptitudes_scores = call_bedrock(messages_list, True)
-            cleaned_response = conclusion
-            final_scores = aptitudes_scores
+        # Verificar si esta es la última pregunta (después de agregar la respuesta del usuario)
+        # Si next_question >= total_questions, significa que el usuario acaba de responder la última pregunta
+        is_final_question = next_question >= total_questions
+        
+        if is_final_question:
+            # Llamar a Bedrock con structured output para obtener final_scores
+            # Referencia: AWS Bedrock Structured Outputs
+            # https://docs.aws.amazon.com/bedrock/latest/userguide/model-customization-structured-outputs.html
+            conclusion, aptitudes_scores = call_bedrock(messages_list, is_final_analysis=True)
+            final_scores = aptitudes_scores  # Los aptitudes_scores son los final_scores que necesitamos
             is_finished = True
+            cleaned_response = ""  # No agregamos mensaje del asistente al historial, solo finalizamos
+            
+            # Guardar progreso como FINISHED con final_scores
+            status = save_chat_progress(progress_table, chat_id, user_id, history, is_finished, next_question, final_scores, total_questions)
+            
+            # Retornar respuesta con historial y final_scores
+            return build_response(cleaned_response, chat_id, status, history, final_scores)
         else:
-            chatbot_response, _ = call_bedrock(messages_list, False)
+            # Si no es la última pregunta, generar la siguiente pregunta normalmente
+            chatbot_response, _ = call_bedrock(messages_list, is_final_analysis=False)
             cleaned_response = chatbot_response
             final_scores = None
             is_finished = False
-        
-        history.append(f"Asistente: {cleaned_response}")
-        
-        # Guardar progreso
-        status = save_chat_progress(progress_table, chat_id, user_id, history, is_finished, next_question, final_scores, total_questions)
-        
-        # Construir y retornar respuesta
-        return build_response(cleaned_response, chat_id, status, history, final_scores)
+            
+            history.append(f"Asistente: {cleaned_response}")
+            
+            # Guardar progreso
+            status = save_chat_progress(progress_table, chat_id, user_id, history, is_finished, next_question, final_scores, total_questions)
+            
+            # Construir y retornar respuesta
+            return build_response(cleaned_response, chat_id, status, history, final_scores)
 
     except Exception as e:
         print(f"Error en Lambda: {e}")

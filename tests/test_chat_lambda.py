@@ -142,13 +142,26 @@ def test_initial_flow_persists_total_questions_and_waiting_q2(monkeypatch):
 
     assert result["statusCode"] == 200
     body = json.loads(result["body"])
-    assert body["status"] == "Waiting for Q2"
+    assert body["status"] == "Waiting for 2 of 7"
     assert body["chatbot_response"] == "Primera pregunta"
 
     # Verify progress was persisted with TotalQuestions = 7 and QuestionNumber = 2
     persisted = stores["progress"]["chat-1"]
     assert persisted["TotalQuestions"] == 7
     assert persisted["QuestionNumber"] == 2
+
+    # Now call again with no prompt to retrieve history (chat in progress)
+    event_no_prompt = {
+        "httpMethod": "POST",
+        "body": json.dumps({"ChatID": "chat-1", "UserID": "user-1"})
+    }
+    result2 = chat_module.handler(event_no_prompt, context={})
+    assert result2["statusCode"] == 200
+    body2 = json.loads(result2["body"])
+    assert body2["status"] == "Waiting for 2 of 7"
+    # Should not change QuestionNumber nor append new assistant message
+    persisted2 = stores["progress"]["chat-1"]
+    assert persisted2["QuestionNumber"] == 2
 
 
 def test_final_analysis_after_all_questions_and_returns_scores(monkeypatch):
@@ -162,10 +175,9 @@ def test_final_analysis_after_all_questions_and_returns_scores(monkeypatch):
     result1 = chat_module.handler(make_event(chat_id="chat-2", user_id="user-2"), context={})
     assert result1["statusCode"] == 200
 
-    # Simulate that we already asked all 5 questions; next_question should be 6 (N+1)
-    # We'll shortcut by updating the persisted item
+    # Simulate that we're at the last question just answered; next_question == TotalQuestions
     item = stores["progress"]["chat-2"]
-    item["QuestionNumber"] = item["TotalQuestions"] + 1  # 6
+    item["QuestionNumber"] = item["TotalQuestions"]  # trigger >= condition
     stores["progress"]["chat-2"] = item
 
     # Next call should trigger final analysis
@@ -188,7 +200,7 @@ def test_cap_at_100_aptitudes(monkeypatch):
     result = chat_module.handler(make_event(chat_id="chat-3", user_id="user-3"), context={})
     assert result["statusCode"] == 200
     body = json.loads(result["body"])
-    assert body["status"] == "Waiting for Q2"
+    assert body["status"] == "Waiting for 2 of 100"
     assert body["chatbot_response"] == "Pregunta con cap"
 
     # Verify cap applied
@@ -197,5 +209,20 @@ def test_cap_at_100_aptitudes(monkeypatch):
     # Ensure the master prompt in history references the capped count
     master_prompt = persisted["History"][0]
     assert f"({persisted['TotalQuestions']} Preguntas" in master_prompt
+
+
+def test_rejects_overly_long_user_input_with_400(monkeypatch):
+    stores = {"progress": {}, "quota": {}}
+    aptitudes = [f"Aptitud {i}" for i in range(1, 4)]
+    from lib.chat import chat as chat_module_local
+    chat_module_local.dynamodb = FakeDynamoResource(stores, aptitudes)
+    chat_module_local.bedrock = FakeBedrockClient()
+
+    long_text = "x" * (chat_module_local.MAX_USER_INPUT_CHARS + 50)
+    event = make_event(chat_id="chat-4", user_id="user-4", prompt=long_text)
+    result = chat_module_local.handler(event, context={})
+    assert result["statusCode"] == 400
+    body = json.loads(result["body"])
+    assert "excede el máximo" in body.get("error", "").lower()
 
 
