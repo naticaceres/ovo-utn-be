@@ -39,7 +39,8 @@ from response_builder import (
 )
 from utils import (
     validate_request,
-    get_last_assistant_message
+    get_last_assistant_message,
+    extract_question_number_from_response
 )
 
 
@@ -107,7 +108,8 @@ def handler(event, context):
             )
 
         # Agregar respuesta del usuario al historial
-        if next_question > 1 and isinstance(prompt, str) and prompt.strip() != "":
+        # Incluir la respuesta si hay prompt y no es un chat nuevo sin respuesta
+        if isinstance(prompt, str) and prompt.strip() != "":
             history.append(f"Usuario: {prompt}")
         
         # Verificar cuotas (solo cuando vamos a invocar a Bedrock)
@@ -118,8 +120,9 @@ def handler(event, context):
         # Construir mensajes y llamar Bedrock
         messages_list = build_messages_from_history(history)
         
-        # Verificar si esta es la última pregunta
-        # Si next_question >= total_questions, el usuario acaba de responder la última pregunta
+        # Verificar si el usuario acaba de responder la última pregunta
+        # Si next_question >= total_questions, el usuario ya respondió todas las preguntas
+        # y necesitamos generar el análisis final (no otra pregunta)
         is_final_question = next_question >= total_questions
         
         if is_final_question:
@@ -149,12 +152,28 @@ def handler(event, context):
                 is_final_analysis=False
             )
             cleaned_response = chatbot_response
-            final_scores = None
+            final_scores = None  # No hay final_scores en preguntas intermedias
             is_finished = False
+            
+            # Extraer el número de pregunta de la respuesta del chatbot
+            # El chatbot controla el conteo y debe incluir "Pregunta N de M:" en su respuesta
+            # Esto permite manejar correctamente las reformulaciones (mismo número)
+            extracted_question_num = extract_question_number_from_response(cleaned_response, total_questions)
+            
+            if extracted_question_num is not None:
+                # Usar el número extraído de la respuesta del chatbot
+                # Esto asegura sincronización: el chatbot es la fuente de verdad
+                next_question = extracted_question_num
+            else:
+                # Fallback: si no se puede extraer, incrementar manualmente
+                # Esto puede pasar si el chatbot no incluye el formato esperado
+                next_question = next_question + 1
+                print(f"WARNING: No se pudo extraer número de pregunta de la respuesta. Usando fallback: {next_question}")
             
             history.append(f"Asistente: {cleaned_response}")
             
-            # Guardar progreso
+            # Guardar progreso con el número de pregunta extraído (fuente de verdad del chatbot)
+            # Esto asegura que no haya desincronización para detectar correctamente el análisis final
             status = save_chat_progress(
                 progress_table, chat_id, user_id, history, 
                 is_finished, next_question, final_scores, total_questions

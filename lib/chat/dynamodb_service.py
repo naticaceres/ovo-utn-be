@@ -130,16 +130,17 @@ def save_chat_progress(progress_table, chat_id, user_id, history, is_finished, n
         )
         return 'FINISHED'
     else:
-        new_question_number = next_question + 1
+        # Usar el número de pregunta recibido directamente (viene del chatbot)
+        # Esto permite manejar reformulaciones correctamente (mismo número)
         progress_table.put_item(
             Item={
                 'ChatID': chat_id,
                 'UserID': user_id,
-                'QuestionNumber': new_question_number,
+                'QuestionNumber': next_question,
                 'History': history,
                 'Status': 'IN_PROGRESS',
                 'TotalQuestions': total_questions
             }
         )
-        return f'Waiting for {new_question_number} of {total_questions}'
+        return f'Waiting for {next_question} of {total_questions}'
 

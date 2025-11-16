@@ -114,3 +114,47 @@ def get_last_assistant_message(history):
             return line[len(HISTORY_PREFIX_ASSISTANT):].strip()
     return ""
 
+
+def extract_question_number_from_response(response_text, total_questions):
+    """
+    Extrae el número de pregunta de la respuesta del chatbot.
+    
+    El chatbot debe incluir el número en formato "Pregunta N de M:" o variaciones.
+    Esta función busca patrones como:
+    - "Pregunta 4 de 14:"
+    - "Pregunta 4/14:"
+    - "Pregunta 4 de 14"
+    - etc.
+    
+    Args:
+        response_text: Texto de la respuesta del chatbot
+        total_questions: Total de preguntas (para validación)
+        
+    Returns:
+        int: Número de pregunta extraído, o None si no se encuentra
+    """
+    if not response_text:
+        return None
+    
+    # Patrones para buscar el número de pregunta
+    patterns = [
+        r'Pregunta\s+(\d+)\s+de\s+\d+',  # "Pregunta 4 de 14"
+        r'Pregunta\s+(\d+)/\d+',  # "Pregunta 4/14"
+        r'Pregunta\s+(\d+):',  # "Pregunta 4:"
+        r'pregunta\s+(\d+)',  # "pregunta 4" (case insensitive)
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, response_text, re.IGNORECASE)
+        if match:
+            try:
+                question_num = int(match.group(1))
+                # Validar que esté en rango válido (1 a total_questions)
+                # El chatbot maneja reformulaciones manteniendo el mismo número
+                if 1 <= question_num <= total_questions:
+                    return question_num
+            except (ValueError, IndexError):
+                continue
+    
+    return None
+
