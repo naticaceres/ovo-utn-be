@@ -115,6 +115,41 @@ def get_last_assistant_message(history):
     return ""
 
 
+def clean_response_trailing_text(text):
+    """
+    Limpia texto adicional no deseado al final de las respuestas del chatbot.
+    
+    NOTA: Esta función es una medida de seguridad adicional. La prevención principal
+    viene de las stop sequences configuradas en Bedrock y el prompt.
+    Esta función solo limpia en caso de que alguna variación escape a las stop sequences.
+    
+    Args:
+        text: Texto de la respuesta del chatbot
+        
+    Returns:
+        str: Texto limpio sin patrones no deseados al final
+    """
+    if not text:
+        return text
+    
+    # Patrones a remover del final del texto (medida de seguridad adicional)
+    # Las stop sequences en Bedrock deberían prevenir estos casos
+    patterns_to_remove = [
+        r'\n\nPregunta\s*$',  # "\n\nPregunta" al final
+        r'\n\nPregunta\s+$',  # "\n\nPregunta " al final
+        r'\nPregunta\s*$',  # "\nPregunta" al final
+        r'\n\nfinal_scores\s*:?\s*$',  # "\n\nfinal_scores:" al final
+        r'\n\nfinal_scores\s*$',  # "\n\nfinal_scores" al final
+        r'\nfinal_scores\s*:?\s*$',  # "\nfinal_scores:" al final
+    ]
+    
+    cleaned = text
+    for pattern in patterns_to_remove:
+        cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE)
+    
+    return cleaned.strip()
+
+
 def extract_question_number_from_response(response_text, total_questions):
     """
     Extrae el número de pregunta de la respuesta del chatbot.
@@ -136,6 +171,9 @@ def extract_question_number_from_response(response_text, total_questions):
     if not response_text:
         return None
     
+    # Limpiar texto adicional no deseado antes de extraer el número
+    cleaned_text = clean_response_trailing_text(response_text)
+    
     # Patrones para buscar el número de pregunta
     patterns = [
         r'Pregunta\s+(\d+)\s+de\s+\d+',  # "Pregunta 4 de 14"
@@ -145,7 +183,7 @@ def extract_question_number_from_response(response_text, total_questions):
     ]
     
     for pattern in patterns:
-        match = re.search(pattern, response_text, re.IGNORECASE)
+        match = re.search(pattern, cleaned_text, re.IGNORECASE)
         if match:
             try:
                 question_num = int(match.group(1))

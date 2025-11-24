@@ -26,7 +26,8 @@ from quota_service import (
 )
 from dynamodb_service import (
     get_chat_state,
-    save_chat_progress
+    save_chat_progress,
+    get_aptitudes_from_table
 )
 from bedrock_client import (
     build_messages_from_history,
@@ -126,18 +127,42 @@ def handler(event, context):
         is_final_question = next_question >= total_questions
         
         if is_final_question:
+            # Obtener aptitudes de la DB para construir el schema con nombres exactos
+            # Esto asegura que los final_scores usen los nombres exactos de la DB
+            # total_questions ya está establecido desde el inicio del chat y es igual al número de aptitudes
+            aptitudes = get_aptitudes_from_table()
+            
+            # Agregar mensaje explícito al historial temporalmente para reforzar la evaluación
+            # Esto ayuda al LLM a entender que debe revisar todas las respuestas y evaluar cada aptitud
+            # NOTA: Este mensaje NO se agrega al historial persistido, solo se usa para construir messages_list
+            evaluation_instruction = (
+                "System: Ahora debes generar el análisis final. "
+                "REVISA TODO EL HISTORIAL de respuestas del usuario. "
+                "Para cada aptitud, busca la respuesta correspondiente del usuario y evalúa el nivel de evidencia (1-10). "
+                "NO uses el mismo puntaje para todas. Los puntajes deben reflejar las diferencias reales en las respuestas. "
+                "Si el usuario fue positivo sobre una aptitud (ej: 'me gusta', 'me encanta', 'bastante bien') asigna 7-10. "
+                "Si fue negativo (ej: 'no me gusta', 'no es lo mío', 'mal') asigna 1-3. "
+                "Si fue neutro (ej: 'ok', 'regular') asigna 4-6. "
+                "Evalúa cada aptitud INDEPENDIENTEMENTE según la respuesta específica del usuario."
+            )
+            # Construir historial temporal con la instrucción (no se persiste)
+            temp_history = history + [evaluation_instruction]
+            messages_list = build_messages_from_history(temp_history)
+            
             # Llamar a Bedrock con structured output para obtener final_scores
             # Referencia: AWS Bedrock Structured Outputs
             # https://docs.aws.amazon.com/bedrock/latest/userguide/model-customization-structured-outputs.html
             conclusion, aptitudes_scores = call_bedrock(
                 messages_list, 
-                is_final_analysis=True
+                is_final_analysis=True,
+                aptitudes=aptitudes
             )
             final_scores = aptitudes_scores
             is_finished = True
             cleaned_response = ""  # No agregamos mensaje del asistente, solo finalizamos
             
             # Guardar progreso como FINISHED con final_scores
+            # Usar history original (sin el mensaje de instrucción interna)
             status = save_chat_progress(
                 progress_table, chat_id, user_id, history, 
                 is_finished, next_question, final_scores, total_questions
@@ -151,7 +176,10 @@ def handler(event, context):
                 messages_list, 
                 is_final_analysis=False
             )
-            cleaned_response = chatbot_response
+            # Limpiar texto adicional no deseado como medida de seguridad adicional
+            # (la prevención principal viene de stop sequences y prompt)
+            from utils import clean_response_trailing_text
+            cleaned_response = clean_response_trailing_text(chatbot_response)
             final_scores = None  # No hay final_scores en preguntas intermedias
             is_finished = False
             

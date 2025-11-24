@@ -67,7 +67,7 @@ def build_messages_from_history(history):
     return messages_list
 
 
-def call_bedrock(messages_list, is_final_analysis=False):
+def call_bedrock(messages_list, is_final_analysis=False, aptitudes=None):
     """
     Invoca el modelo de Bedrock con configuración optimizada.
     
@@ -76,14 +76,14 @@ def call_bedrock(messages_list, is_final_analysis=False):
     
     Args:
         messages_list: Lista de mensajes en formato Bedrock (el system prompt ya está incluido como primer mensaje)
-        system_prompt: Parámetro obsoleto, mantenido por compatibilidad (ignorado)
         is_final_analysis: Si es True, usa structured output para análisis final
+        aptitudes: Lista de nombres exactos de aptitudes de la DB (requerido si is_final_analysis=True)
         
     Returns:
         tuple: (text_response, final_scores_dict) o (text_response, None)
         
     Raises:
-        Exception: Si el structured output no se genera correctamente
+        Exception: Si el structured output no se genera correctamente o si faltan aptitudes
     """
     # Construir payload base según formato original que funcionaba
     # El modelo Nova no requiere schemaVersion ni campo system separado
@@ -126,6 +126,8 @@ def call_bedrock(messages_list, is_final_analysis=False):
     
     # Usar structured output para análisis final
     if is_final_analysis:
+        if not aptitudes:
+            raise Exception("aptitudes es requerido cuando is_final_analysis=True")
         payload["toolConfig"] = {
             "toolChoice": {"tool": {"name": "final_analysis"}},
             "tools": [{
@@ -133,7 +135,7 @@ def call_bedrock(messages_list, is_final_analysis=False):
                     "name": "final_analysis",
                     "description": "Análisis final de orientación vocacional",
                     "inputSchema": {
-                        "json": get_final_analysis_schema()
+                        "json": get_final_analysis_schema(aptitudes)
                     }
                 }
             }]

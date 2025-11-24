@@ -75,7 +75,8 @@ class TestGetFinalAnalysisSchema:
     
     def test_schema_structure(self):
         """Test que el schema tiene la estructura correcta"""
-        schema = get_final_analysis_schema()
+        aptitudes = ["Creatividad", "Trabajo en equipo"]
+        schema = get_final_analysis_schema(aptitudes)
         
         assert schema["type"] == "object"
         assert "properties" in schema
@@ -83,25 +84,54 @@ class TestGetFinalAnalysisSchema:
     
     def test_schema_has_aptitudes_scores(self):
         """Test que el schema incluye aptitudes_scores"""
-        schema = get_final_analysis_schema()
+        aptitudes = ["Creatividad", "Trabajo en equipo"]
+        schema = get_final_analysis_schema(aptitudes)
         
         assert "aptitudes_scores" in schema["properties"]
         assert "aptitudes_scores" in schema["required"]
     
-    def test_aptitudes_scores_properties(self):
-        """Test que aptitudes_scores tiene las propiedades correctas"""
-        schema = get_final_analysis_schema()
+    def test_aptitudes_scores_uses_exact_names(self):
+        """Test que aptitudes_scores usa los nombres exactos de las aptitudes"""
+        aptitudes = ["Creatividad", "Trabajo en equipo", "Liderazgo"]
+        schema = get_final_analysis_schema(aptitudes)
         aptitudes_scores = schema["properties"]["aptitudes_scores"]
         
         assert aptitudes_scores["type"] == "object"
-        assert "additionalProperties" in aptitudes_scores
-        assert aptitudes_scores["additionalProperties"]["type"] == "number"
-        assert aptitudes_scores["additionalProperties"]["minimum"] == 1
-        assert aptitudes_scores["additionalProperties"]["maximum"] == 10
+        assert "properties" in aptitudes_scores
+        assert "required" in aptitudes_scores
+        assert aptitudes_scores["additionalProperties"] == False
+        
+        # Verificar que cada aptitud está en properties
+        for aptitud in aptitudes:
+            assert aptitud in aptitudes_scores["properties"], f"La aptitud '{aptitud}' debe estar en properties"
+            assert aptitud in aptitudes_scores["required"], f"La aptitud '{aptitud}' debe estar en required"
+            
+            # Verificar estructura de cada aptitud
+            aptitud_prop = aptitudes_scores["properties"][aptitud]
+            assert aptitud_prop["type"] == "number"
+            assert aptitud_prop["minimum"] == 1
+            assert aptitud_prop["maximum"] == 10
+    
+    def test_schema_preserves_aptitude_names_exactly(self):
+        """Test que el schema preserva los nombres exactos de las aptitudes (sin conversión a kebab-case)"""
+        aptitudes = ["Trabajo en equipo", "Pensamiento crítico", "Comunicación efectiva"]
+        schema = get_final_analysis_schema(aptitudes)
+        aptitudes_scores = schema["properties"]["aptitudes_scores"]
+        
+        # Verificar que los nombres se mantienen exactamente como están
+        assert "Trabajo en equipo" in aptitudes_scores["properties"]
+        assert "Pensamiento crítico" in aptitudes_scores["properties"]
+        assert "Comunicación efectiva" in aptitudes_scores["properties"]
+        
+        # Verificar que NO se convierten a kebab-case
+        assert "trabajo-en-equipo" not in aptitudes_scores["properties"]
+        assert "pensamiento-critico" not in aptitudes_scores["properties"]
+        assert "comunicacion-efectiva" not in aptitudes_scores["properties"]
     
     def test_schema_no_conclusion(self):
         """Test que el schema NO incluye conclusion (solo aptitudes_scores)"""
-        schema = get_final_analysis_schema()
+        aptitudes = ["Creatividad"]
+        schema = get_final_analysis_schema(aptitudes)
         
         assert "conclusion" not in schema["properties"]
 

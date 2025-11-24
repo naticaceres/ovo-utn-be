@@ -159,7 +159,8 @@ class TestCallBedrock:
             {"role": "user", "content": [{"text": "Última respuesta"}]}
         ]
         
-        response, scores = call_bedrock(messages, is_final_analysis=True)
+        aptitudes = ["Creatividad", "Liderazgo"]
+        response, scores = call_bedrock(messages, is_final_analysis=True, aptitudes=aptitudes)
         
         assert response == ""
         assert scores == {"Creatividad": 8, "Liderazgo": 7}
@@ -241,7 +242,8 @@ class TestCallBedrock:
         mock_bedrock.invoke_model.return_value = {"body": mock_body}
         
         messages = [{"role": "user", "content": [{"text": "Test"}]}]
-        call_bedrock(messages, is_final_analysis=True)
+        aptitudes = ["Creatividad", "Liderazgo"]
+        call_bedrock(messages, is_final_analysis=True, aptitudes=aptitudes)
         
         call_args = mock_bedrock.invoke_model.call_args
         payload = json.loads(call_args[1]["body"])
@@ -267,9 +269,20 @@ class TestCallBedrock:
         mock_bedrock.invoke_model.return_value = {"body": mock_body}
         
         messages = [{"role": "user", "content": [{"text": "Test"}]}]
+        aptitudes = ["Creatividad"]
         
         with pytest.raises(Exception) as exc_info:
-            call_bedrock(messages, is_final_analysis=True)
+            call_bedrock(messages, is_final_analysis=True, aptitudes=aptitudes)
         
         assert "toolUse" in str(exc_info.value)
+    
+    @patch('lib.chat.bedrock_client.bedrock')
+    def test_call_bedrock_final_analysis_requires_aptitudes(self, mock_bedrock):
+        """Test que lanza excepción si is_final_analysis=True pero no se pasan aptitudes"""
+        messages = [{"role": "user", "content": [{"text": "Test"}]}]
+        
+        with pytest.raises(Exception) as exc_info:
+            call_bedrock(messages, is_final_analysis=True, aptitudes=None)
+        
+        assert "aptitudes" in str(exc_info.value).lower()
 

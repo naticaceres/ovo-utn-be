@@ -1,0 +1,20 @@
+# Reportes generados por Locust
+*.html
+*.csv
+reports/
+*.log
+
+# Archivos temporales
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Archivos de configuración con información sensible
+.env
+
+# Archivos de resultados antiguos (en raíz)
+results_*.csv
+report.html
+
